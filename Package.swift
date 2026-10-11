@@ -22,6 +22,10 @@ let package = Package(
         .executable(
             name: "MacTaskCleanerIntegrationTests",
             targets: ["MacTaskCleanerIntegrationTests"]
+        ),
+        .executable(
+            name: "MacTaskCleanerApp",
+            targets: ["MacTaskCleanerApp"]
         )
     ],
     targets: [
@@ -39,6 +43,10 @@ let package = Package(
         ),
         .executableTarget(
             name: "MacTaskCleanerIntegrationTests",
+            dependencies: ["MacTaskCleanerCore"]
+        ),
+        .executableTarget(
+            name: "MacTaskCleanerApp",
             dependencies: ["MacTaskCleanerCore"]
         )
     ]

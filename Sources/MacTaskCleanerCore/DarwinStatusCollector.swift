@@ -191,4 +191,36 @@ public final class DarwinStatusCollector: ProcessIdentityProvider, @unchecked Se
             generationID: generationID
         )
     }
+
+    /// Queries total physical RAM in bytes via sysctl hw.memsize
+    public func queryPhysicalRAM() -> UInt64 {
+        var memsize: UInt64 = 0
+        var size = MemoryLayout<UInt64>.size
+        let ret = sysctlbyname("hw.memsize", &memsize, &size, nil, 0)
+        guard ret == 0, memsize > 0 else {
+            return 8 * 1024 * 1024 * 1024 // Fallback 8GB
+        }
+        return memsize
+    }
+
+    /// Queries current system memory pressure level:
+    /// 1 = Normal, 2 = Warning, 4 = Critical
+    public func queryMemoryPressureLevel() -> Int32 {
+        var level: Int32 = 1
+        var size = MemoryLayout<Int32>.size
+        let ret = sysctlbyname("kern.memorystatus_vm_pressure_level", &level, &size, nil, 0)
+        guard ret == 0 else { return 1 }
+        return level
+    }
+
+    /// Queries process resident memory footprint in bytes via proc_pidinfo(PROC_PIDTASKINFO)
+    public func queryProcessMemory(for pid: pid_t) -> UInt64? {
+        var taskInfo = proc_taskinfo()
+        let taskSize = MemoryLayout<proc_taskinfo>.size
+        let ret = proc_pidinfo(pid, PROC_PIDTASKINFO, 0, &taskInfo, Int32(taskSize))
+        guard ret == Int32(taskSize) else {
+            return nil
+        }
+        return taskInfo.pti_resident_size
+    }
 }
