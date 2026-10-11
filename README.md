@@ -30,16 +30,24 @@ Apple Silicon M1 macOS 환경(8GB RAM)을 위한 안전한 프로세스 관찰 �
   - AppKit 생명주기(`NSApplication`, `setActivationPolicy(.regular)`, `applicationShouldTerminate:`)를 갖춘 시험용 `.app` 번들 실행체. 일반 즉시 종료 및 `--delay-terminate` 인자를 통한 지연 종료(`.terminateLater`) 지원.
 - **`MacTaskCleanerIntegrationTests`**:
   - 실제 macOS 환경에서 실행되는 3단계 통합 시험 러너. `NSWorkspace.openApplication` 실행, `NSWorkspace.shared.notificationCenter` 알림 수신, 런루프 동기 이벤트 처리, 커널 메트릭 수집 및 실제 타임스탬프 이벤트 크로놀로지 검증.
+- **`MacTaskCleanerApp`**:
+  - macOS 메뉴 막대 상주 앱 (`NSStatusItem` 및 상세 관측 창).
+  - 실시간 물리 RAM(고정/사용/압축/여유), 스왑 사용량, 메모리 압박 수준(정상/주의/위험) 표시.
+  - 실행 중인 앱별 실시간 상주 메모리(Resident Footprint) 및 안전 보호 분류(보호됨/정리 가능).
+  - 안전 종료 요청 대화상자 및 나노초 단위 감사 기록(Chronology Log) 시각화.
+  - 대기 상태 실측 메모리 17.5MB RSS, 0.0% CPU의 극저부하 아키텍처.
 
 ---
 
-## 3. 빌드 및 테스트 방법
+## 3. 빌드 및 실행 방법
 
-### 3.1 더미 앱 번들 준비
-통합 시험 실행 전, AppKit 앱 번들(`DummyTestTarget.app`)을 빌드하고 패키징합니다.
+### 3.1 맥 작업정리 앱 빌드 및 실행 (Phase 4)
+릴리스 모드로 앱 번들(`MacTaskCleaner.app`)을 패키징하고 실행합니다:
 ```bash
-./scripts/build_dummy_app.sh
+./scripts/build_app.sh
+open .build/out/Products/Release/MacTaskCleaner.app
 ```
+*(메뉴 막대에 `🟢 RAM 6.xG | Swap xxM` 아이콘이 생성되며, 클릭하여 바로 상태 확인 및 상세 창을 열 수 있습니다.)*
 
 ### 3.2 1~2단계 단위 및 모의 상태 테스트 실행
 ```bash
@@ -49,6 +57,10 @@ echo "EXIT_CODE=$?"
 
 ### 3.3 3단계 macOS 통합 시험 실행
 ```bash
+# 더미 앱 준비
+./scripts/build_dummy_app.sh
+
+# 통합 시험 실행
 swift run MacTaskCleanerIntegrationTests
 echo "EXIT_CODE=$?"
 ```
@@ -57,5 +69,6 @@ echo "EXIT_CODE=$?"
 
 ## 4. 검증 로그
 
-- 1~2단계 단위/모의 시험: [logs/phase1_phase2_unit_mock_test.log](logs/phase1_phase2_unit_mock_test.log) (32개 테스트, 53개 단언문 통과, `EXIT_CODE=0`)
-- 3단계 macOS 통합 시험: [logs/phase3_integration_test.log](logs/phase3_integration_test.log) (5개 통합 시나리오, 46개 단언문 통과, `EXIT_CODE=0`)
+- 1~2단계 단위/모의 시험: [logs/phase1_phase2_unit_mock_test.log](logs/phase1_phase2_unit_mock_test.log) (32개 테스트, **73개 단언문 통과**, `EXIT_CODE=0`)
+- 3단계 macOS 통합 시험: [logs/phase3_integration_test.log](logs/phase3_integration_test.log) (6개 통합 시나리오, **55개 단언문 통과**, `EXIT_CODE=0`)
+- 4단계 실측 성능: 백그라운드 상주 메모리 **17.5 MB RSS**, CPU **0.0%** (설계 목표 100MB 이하, 1% 이하 완벽 충족)
