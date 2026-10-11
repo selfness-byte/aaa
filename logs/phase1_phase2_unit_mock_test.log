@@ -1,16 +1,16 @@
 Building for debugging...
 [Planning deferred tasks]
-[1 / 7]
 [2 / 8] MacTaskCleanerCore
-[6 / 12] MacTaskCleanerCore
-[10 / 15] MacTaskCleanerCore
-[12 / 17] MacTaskCleanerCore
+[7 / 13] MacTaskCleanerCore
+[11 / 16] MacTaskCleanerCore
+[13 / 18] MacTaskCleanerCore
 /Users/mj/.gemini/antigravity-ide/scratch/aaa_repo/Package.swift: MacTaskCleanerCore: ld: warning: search path '/Library/Developer/CommandLineTools/Developer/Library/Frameworks' not found
-[15 / 18] MacTaskCleanerTestsRunner-product
+[15 / 19] MacTaskCleanerTestsRunner-product
+[16 / 19] MacTaskCleanerTestsRunner-product
 /Users/mj/.gemini/antigravity-ide/scratch/aaa_repo/Package.swift: MacTaskCleanerTestsRunner-product: ld: warning: search path '/Library/Developer/CommandLineTools/Developer/usr/lib' not found
 /Users/mj/.gemini/antigravity-ide/scratch/aaa_repo/Package.swift: MacTaskCleanerTestsRunner-product: ld: warning: search path '/Library/Developer/CommandLineTools/Developer/Library/Frameworks' not found
-[17 / 18] MacTaskCleanerTestsRunner-product
-Build complete! (2.15초)
+[18 / 19] MacTaskCleanerTestsRunner-product
+Build complete! (1.91초)
 ==================================================
 🚀 Running MacTaskCleaner Tests (Phase 1 & Phase 2)
 ==================================================
@@ -52,13 +52,13 @@ Build complete! (2.15초)
   ✅ [PASS] testNewExecutionInstanceIsolation (Isolation across restarts)
   ✅ [PASS] testChronologyCalculationSafeUnderflow (R1 Safe UInt64 Formatting)
   ✅ [PASS] testTargetMismatchDoesNotTriggerAlreadyTerminated (R2 Contract Fix)
-  ✅ [PASS] testRejectStaleInstanceStartTimeOnCPUSample (R3 Kernel Validation)
+  ✅ [PASS] testNotificationTrackerPerPIDAttribution (R4 Readiness Fix)
 
 ==================================================
 📊 Test Summary:
-   Assertions Passed: 61
+   Assertions Passed: 66
    Assertions Failed: 0
-   Elapsed Time: 2.388 ms
+   Elapsed Time: 4.317 ms
 🎉 ALL TESTS PASSED SUCCESSFULLY!
 ==================================================
 EXIT_CODE=0

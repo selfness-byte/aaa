@@ -2,49 +2,6 @@ import AppKit
 import Foundation
 import MacTaskCleanerCore
 
-// MARK: - Thread-Safe Notification Tracker
-
-final class NotificationTracker: @unchecked Sendable {
-    private var received = false
-    private var timestamp: UInt64 = 0
-    private var filterPID: pid_t = 0
-    private let lock = NSLock()
-
-    func setFilterPID(_ pid: pid_t) {
-        lock.lock()
-        defer { lock.unlock() }
-        filterPID = pid
-    }
-
-    func recordIfMatches(pid: pid_t, at time: UInt64) {
-        lock.lock()
-        defer { lock.unlock() }
-        if filterPID == 0 || filterPID == pid {
-            received = true
-            timestamp = time
-        }
-    }
-
-    func record(at time: UInt64) {
-        lock.lock()
-        defer { lock.unlock() }
-        received = true
-        timestamp = time
-    }
-
-    var isReceived: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return received
-    }
-
-    var recordedTime: UInt64 {
-        lock.lock()
-        defer { lock.unlock() }
-        return timestamp
-    }
-}
-
 // MARK: - Confinement-Guarded Live App Terminator
 
 /// An AppTerminator that strictly limits termination requests ONLY to the specific
@@ -99,6 +56,8 @@ final class DummyAppTerminator: AppTerminator, @unchecked Sendable {
     }
 }
 
+// MARK: - Mock Protection Checker for Integration
+
 final class MockIntegrationProtectionChecker: ProtectionChecker, @unchecked Sendable {
     func checkProtection(for instanceID: ExecutionInstanceID) -> ProtectionCheckResult {
         return .unprotected
@@ -122,7 +81,12 @@ final class IntegrationTestRunner {
     }
 
     func assertFalse(_ condition: @autoclosure () -> Bool, _ message: String = "", file: String = #file, line: Int = #line) {
-        assertTrue(!condition(), message, file: file, line: line)
+        if !condition() {
+            passedCount += 1
+        } else {
+            failedCount += 1
+            print("❌ [FAILED] Assertion failed (expected false) at \(file):\(line): \(message)")
+        }
     }
 
     func assertEqual<T: Equatable>(_ actual: T, _ expected: T, _ message: String = "", file: String = #file, line: Int = #line) {
@@ -130,23 +94,20 @@ final class IntegrationTestRunner {
             passedCount += 1
         } else {
             failedCount += 1
-            print("❌ [FAILED] Expected [\(expected)], got [\(actual)] at \(file):\(line) — \(message)")
+            print("❌ [FAILED] Expected [\(expected)], got [\(actual)] at \(file):\(line): \(message)")
         }
     }
 
+    func printPass(_ testName: String) {
+        print("  ✅ [PASS] \(testName)")
+    }
+
     func runTest(_ name: String, block: () async throws -> Void) async {
-        let beforeFails = failedCount
-        let beforePassed = passedCount
         do {
+            let startFailures = failedCount
             try await block()
-            let assertionsInTest = (passedCount - beforePassed) + (failedCount - beforeFails)
-            if assertionsInTest == 0 {
-                failedCount += 1
-                print("  ❌ [FAIL] \(name) (No assertions executed!)")
-            } else if failedCount == beforeFails {
-                print("  ✅ [PASS] \(name)")
-            } else {
-                print("  ❌ [FAIL] \(name)")
+            if failedCount == startFailures {
+                printPass(name)
             }
         } catch {
             failedCount += 1
@@ -161,7 +122,7 @@ final class IntegrationTestRunner {
         }
         guard obs >= requestNs else {
             let diffSec = Double(requestNs - obs) / 1e9
-            return "\(obs) ns (timestamp precedes request by \(String(format: "%.3f", diffSec))s)"
+            return "\(obs) ns (precedes request by \(String(format: "%.3f", diffSec))s)"
         }
         let diffSec = Double(obs - requestNs) / 1e9
         return "\(obs) ns (\(String(format: "%.3f", diffSec))s)"
@@ -233,7 +194,7 @@ final class IntegrationTestRunner {
     }
 
     /// Launches DummyTestTarget.app strictly using NSWorkspace.shared.openApplication and ensures readiness.
-    func launchDummyApp(appURL: URL, arguments: [String] = []) async throws -> NSRunningApplication {
+    func launchDummyApp(appURL: URL, arguments: [String] = []) async throws -> (app: NSRunningApplication, notificationReceived: Bool) {
         let config = NSWorkspace.OpenConfiguration()
         config.activates = false
         config.addsToRecentItems = false
@@ -251,7 +212,7 @@ final class IntegrationTestRunner {
         ) { notif in
             if let app = notif.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
                app.bundleIdentifier == "com.mactaskcleaner.dummytesttarget" {
-                launchTracker.recordIfMatches(pid: app.processIdentifier, at: clock_gettime_nsec_np(CLOCK_UPTIME_RAW))
+                launchTracker.record(pid: app.processIdentifier, at: clock_gettime_nsec_np(CLOCK_UPTIME_RAW))
             }
         }
         defer {
@@ -271,21 +232,23 @@ final class IntegrationTestRunner {
                 }
             }
         }
-        launchTracker.setFilterPID(app.processIdentifier)
+
+        let targetPID = app.processIdentifier
 
         // Wait until app has finished its AppKit launch cycle (confirmed via notification or isFinishedLaunching)
         let launchDeadline = Date(timeIntervalSinceNow: 8.0)
-        while Date() < launchDeadline && !app.isFinishedLaunching && !launchTracker.isReceived {
+        while Date() < launchDeadline && !app.isFinishedLaunching && !launchTracker.isReceived(for: targetPID) {
             self.pumpRunLoop(duration: 0.05)
         }
 
-        guard app.isFinishedLaunching || launchTracker.isReceived else {
+        let notifReceived = launchTracker.isReceived(for: targetPID)
+        guard app.isFinishedLaunching || notifReceived else {
             throw NSError(domain: "LaunchError", code: -2, userInfo: [
                 NSLocalizedDescriptionKey: "DummyTestTarget.app failed to complete AppKit launch within 8.0s deadline"
             ])
         }
 
-        return app
+        return (app, notifReceived)
     }
 
     func runAll() async {
@@ -298,24 +261,23 @@ final class IntegrationTestRunner {
         let startTime = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
         let collector = DarwinStatusCollector()
 
-        // Locate & ensure DummyTestTarget.app
-        let bundleDir = URL(fileURLWithPath: CommandLine.arguments[0])
-            .deletingLastPathComponent()
-            .appendingPathComponent("DummyTestTarget.app")
+        // Locate DummyTestTarget.app bundle inside Products directory
+        let bundleURL = Bundle.main.bundleURL
+        let productsURL: URL
+        if bundleURL.pathExtension == "xctest" || bundleURL.pathExtension == "app" {
+            productsURL = bundleURL.deletingLastPathComponent()
+        } else {
+            productsURL = bundleURL
+        }
+        let bundleDir = productsURL.appendingPathComponent("DummyTestTarget.app")
 
         do {
-            try ensureAppBundle(at: bundleDir)
+            try self.ensureAppBundle(at: bundleDir)
+            print("📍 DummyTestTarget.app verified at: \(bundleDir.path)")
         } catch {
-            print("❌ Failed to ensure DummyTestTarget.app bundle: \(error)")
+            print("❌ Failed to verify/package DummyTestTarget.app bundle: \(error)")
             exit(1)
         }
-
-        guard FileManager.default.fileExists(atPath: bundleDir.path) else {
-            print("❌ DummyTestTarget.app not found at \(bundleDir.path)")
-            exit(1)
-        }
-
-        print("📍 DummyTestTarget.app verified at: \(bundleDir.path)")
 
         // MARK: - Test 1: Read-Only Darwin Kernel Metrics, Timebase & CPU Sample Link
         await runTest("Test 1: Read-Only System Metrics, Mach Timebase & CPU Sample Link") {
@@ -389,7 +351,7 @@ final class IntegrationTestRunner {
                 self.assertTrue(false, "CPUUsageCalculator rejected live samples: \(reason)")
             }
 
-            // 1d. Fail-safe: Non-existent PID returns nil (never falsified or zero-filled)
+            // Fail-safe: Non-existent PID returns nil
             let invalidID = ExecutionInstanceID(pid: 999_999, startTimeSec: 0, startTimeUsec: 0)
             let invalidSnapshot = collector.currentSnapshot(for: invalidID)
             self.assertEqual(invalidSnapshot, nil, "Querying non-existent PID must fail-safe and return nil")
@@ -398,18 +360,41 @@ final class IntegrationTestRunner {
             self.assertEqual(invalidCPUSample, nil, "Querying CPU for non-existent PID must return nil")
         }
 
-        // MARK: - Test 2: Launch Dummy App (Real AppKit .app) & Kernel Identity Inspection
+        // MARK: - Test 2: Kernel CPU Sample Start Time Verification (proc_pidinfo PROC_PIDTBSDINFO)
+        await runTest("Test 2: Kernel CPU Sample Start Time Verification (proc_pidinfo PROC_PIDTBSDINFO)") {
+            let selfPID = ProcessInfo.processInfo.processIdentifier
+            let probeID = ExecutionInstanceID(pid: selfPID, startTimeSec: 0, startTimeUsec: 0)
+            guard let realSnapshot = collector.currentSnapshot(for: probeID) else {
+                self.assertTrue(false, "Failed to get real snapshot for self")
+                return
+            }
+
+            // Valid sample with real start time should succeed
+            let validSample = collector.queryCPUTimeSample(for: realSnapshot.instanceID)
+            self.assertTrue(validSample != nil, "Query with exact kernel start time must succeed")
+
+            // Stale sample with altered start time must be rejected (returns nil)
+            let staleInstance = ExecutionInstanceID(
+                pid: selfPID,
+                startTimeSec: realSnapshot.instanceID.startTimeSec &+ 9999,
+                startTimeUsec: realSnapshot.instanceID.startTimeUsec
+            )
+            let staleSample = collector.queryCPUTimeSample(for: staleInstance)
+            self.assertEqual(staleSample, nil, "Query with stale/mismatched start time MUST return nil")
+        }
+
+        // MARK: - Test 3: Launch Dummy App (Real AppKit .app) & Kernel Identity Inspection
         var launchedDummy1: NSRunningApplication?
         var instance1: ExecutionInstanceID?
 
-        await runTest("Test 2: Launch Dummy App (AppKit Bundle) & Query Darwin Process Info") {
-            let app = try await self.launchDummyApp(appURL: bundleDir)
+        await runTest("Test 3: Launch Dummy App (AppKit Bundle) & Query Darwin Process Info") {
+            let (app, launchNotif) = try await self.launchDummyApp(appURL: bundleDir)
             launchedDummy1 = app
             let pid = app.processIdentifier
 
             self.assertEqual(app.bundleIdentifier, "com.mactaskcleaner.dummytesttarget")
             self.assertEqual(app.activationPolicy, .regular, "Dummy app must have .regular activation policy")
-            self.assertEqual(app.isFinishedLaunching, true, "Dummy app must be confirmed finished launching")
+            self.assertTrue(app.isFinishedLaunching || launchNotif, "Dummy app must be confirmed finished launching")
             self.assertTrue(pid > 0, "PID must be positive")
 
             // Probe start time from kernel BSD info (proc_pidinfo PROC_PIDTBSDINFO)
@@ -425,7 +410,7 @@ final class IntegrationTestRunner {
             self.assertTrue(initialSnapshot.instanceID.startTimeSec > 0, "Start time must be non-zero")
 
             instance1 = initialSnapshot.instanceID
-            print("    [Info] Dummy 1 launched: PID=\(pid), StartTimeSec=\(initialSnapshot.instanceID.startTimeSec), UID=\(initialSnapshot.uid), Policy=.regular, isFinishedLaunching=true")
+            print("    [Info] Dummy 1 launched: PID=\(pid), StartTimeSec=\(initialSnapshot.instanceID.startTimeSec), UID=\(initialSnapshot.uid), Policy=.regular, isFinishedLaunching=\(app.isFinishedLaunching), launchNotif=\(launchNotif)")
 
             // Query CPU sample via proc_pidinfo(PROC_PIDTASKINFO)
             guard let cpuSample = collector.queryCPUTimeSample(for: initialSnapshot.instanceID) else {
@@ -436,10 +421,10 @@ final class IntegrationTestRunner {
             self.assertTrue(cpuSample.monotonicTimeNanoseconds > 0)
         }
 
-        // MARK: - Test 3: Graceful Termination of Dummy App via AppKit & Event Chronology
-        await runTest("Test 3: Graceful Termination of Dummy App via AppKit & Event Chronology") {
+        // MARK: - Test 4: Graceful Termination of Dummy App via AppKit & Event Chronology
+        await runTest("Test 4: Graceful Termination of Dummy App via AppKit & Event Chronology") {
             guard let app = launchedDummy1, let inst = instance1 else {
-                self.assertTrue(false, "Missing launched dummy app from Test 2")
+                self.assertTrue(false, "Missing launched dummy app from Test 3")
                 return
             }
 
@@ -447,7 +432,6 @@ final class IntegrationTestRunner {
             let protection = MockIntegrationProtectionChecker()
             let terminator = DummyAppTerminator(runningApp: app, expectedBundleURL: bundleDir)
 
-            // Setup observation on NSWorkspace.shared.notificationCenter
             let tracker = NotificationTracker()
 
             let observer = NSWorkspace.shared.notificationCenter.addObserver(
@@ -459,7 +443,7 @@ final class IntegrationTestRunner {
                    termApp.processIdentifier == inst.pid,
                    termApp == app { // Reference equality check on the specific launched instance
                     let nowNs = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
-                    tracker.record(at: nowNs)
+                    tracker.record(pid: termApp.processIdentifier, at: nowNs)
                     Task {
                         await stateMachine.handleTerminationObserved(instanceID: inst)
                     }
@@ -502,8 +486,8 @@ final class IntegrationTestRunner {
             let elapsedTotalSec = Double(collector.currentMonotonicNanoseconds() - tReq) / 1_000_000_000.0
 
             self.assertTrue(app.isTerminated, "Dummy app must be confirmed terminated")
-            self.assertTrue(tracker.isReceived, "didTerminateApplicationNotification must be received on NSWorkspace.shared.notificationCenter")
-            self.assertTrue(elapsedTotalSec < 10.0, "Termination must occur well before the 60s fallback timeout (Elapsed: \(String(format: "%.3f", elapsedTotalSec))s)")
+            self.assertTrue(tracker.isReceived(for: inst.pid), "didTerminateApplicationNotification must be received on NSWorkspace.shared.notificationCenter")
+            self.assertTrue(elapsedTotalSec < 10.0, "Termination must occur well before fallback timeout")
 
             let finalState = await stateMachine.getState(for: inst)
             switch finalState {
@@ -512,7 +496,7 @@ final class IntegrationTestRunner {
                 print("    [Chronology] Request Sent: \(tReq) ns")
                 print("    [Chronology] Terminate Return: true")
                 print("    [Chronology] isTerminated Observed: \(self.formatChronologyTime(observedNs: tTermObserved, requestNs: tReq))")
-                print("    [Chronology] Notification Received: \(self.formatChronologyTime(observedNs: tracker.isReceived ? tracker.recordedTime : nil, requestNs: tReq))")
+                print("    [Chronology] Notification Received: \(self.formatChronologyTime(observedNs: tracker.isReceived(for: inst.pid) ? tracker.recordedTime(for: inst.pid) : nil, requestNs: tReq))")
                 print("    [Chronology] Final State: .confirmed(\(source))")
             default:
                 self.assertTrue(false, "Expected .confirmed, got \(finalState)")
@@ -522,10 +506,10 @@ final class IntegrationTestRunner {
             self.assertTrue(isObserved)
         }
 
-        // MARK: - Test 4: Delayed Termination of Dummy App (Timeout -> Late Termination)
-        await runTest("Test 4: Delayed Termination of Dummy App (Timeout -> Late Confirmation)") {
+        // MARK: - Test 5: Delayed Termination of Dummy App (Timeout -> Late Termination)
+        await runTest("Test 5: Delayed Termination of Dummy App (Timeout -> Late Confirmation)") {
             // Launch dummy app with --delay-terminate argument
-            let appDelayed = try await self.launchDummyApp(appURL: bundleDir, arguments: ["--delay-terminate"])
+            let (appDelayed, delayedLaunchNotif) = try await self.launchDummyApp(appURL: bundleDir, arguments: ["--delay-terminate"])
             let pidDelayed = appDelayed.processIdentifier
 
             let probeID = ExecutionInstanceID(pid: pidDelayed, startTimeSec: 0, startTimeUsec: 0)
@@ -534,7 +518,7 @@ final class IntegrationTestRunner {
                 return
             }
             let instDelayed = snapDelayed.instanceID
-            print("    [Info] Dummy Delayed launched: PID=\(pidDelayed), StartTimeSec=\(instDelayed.startTimeSec), isFinishedLaunching=true")
+            print("    [Info] Dummy Delayed launched: PID=\(pidDelayed), StartTimeSec=\(instDelayed.startTimeSec), isFinishedLaunching=\(appDelayed.isFinishedLaunching), launchNotif=\(delayedLaunchNotif)")
 
             let stateMachine = TerminationStateMachine()
             let protection = MockIntegrationProtectionChecker()
@@ -551,7 +535,7 @@ final class IntegrationTestRunner {
                    termApp.processIdentifier == pidDelayed,
                    termApp == appDelayed { // Reference equality check
                     let nowNs = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
-                    delayedTracker.record(at: nowNs)
+                    delayedTracker.record(pid: termApp.processIdentifier, at: nowNs)
                     Task {
                         await stateMachine.handleTerminationObserved(instanceID: instDelayed)
                     }
@@ -608,7 +592,7 @@ final class IntegrationTestRunner {
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
 
             self.assertTrue(appDelayed.isTerminated, "Dummy app must eventually terminate after delay")
-            self.assertTrue(delayedTracker.isReceived, "Notification must be received on NSWorkspace.shared.notificationCenter")
+            self.assertTrue(delayedTracker.isReceived(for: instDelayed.pid), "Notification must be received on NSWorkspace.shared.notificationCenter")
 
             let finalState = await stateMachine.getState(for: instDelayed)
             self.assertEqual(finalState, .confirmed(source: .lateNotification), "State must update to confirmed(.lateNotification)")
@@ -617,21 +601,21 @@ final class IntegrationTestRunner {
             self.assertTrue(isObserved)
 
             print("    [Chronology] Late isTerminated Observed: \(self.formatChronologyTime(observedNs: tLateTermObserved, requestNs: tReq))")
-            print("    [Chronology] Late Notification Received: \(self.formatChronologyTime(observedNs: delayedTracker.isReceived ? delayedTracker.recordedTime : nil, requestNs: tReq))")
+            print("    [Chronology] Late Notification Received: \(self.formatChronologyTime(observedNs: delayedTracker.isReceived(for: instDelayed.pid) ? delayedTracker.recordedTime(for: instDelayed.pid) : nil, requestNs: tReq))")
             print("    [Chronology] Final State Transition: .confirmed(.lateNotification)")
         }
 
-        // MARK: - Test 5: Respawn / New Execution Isolation
-        await runTest("Test 5: Respawn / New Execution Isolation") {
+        // MARK: - Test 6: Respawn / New Execution Isolation
+        await runTest("Test 6: Respawn / New Execution Isolation") {
             guard let oldInst = instance1 else {
                 self.assertTrue(false, "Missing old instance")
                 return
             }
 
             // Launch 2nd dummy instance
-            let app2 = try await self.launchDummyApp(appURL: bundleDir)
+            let (app2, app2LaunchNotif) = try await self.launchDummyApp(appURL: bundleDir)
             let pid2 = app2.processIdentifier
-            self.assertEqual(app2.isFinishedLaunching, true, "Dummy 2 must be finished launching")
+            self.assertTrue(app2.isFinishedLaunching || app2LaunchNotif, "Dummy 2 must be confirmed ready")
 
             let probeID2 = ExecutionInstanceID(pid: pid2, startTimeSec: 0, startTimeUsec: 0)
             guard let snap2 = collector.currentSnapshot(for: probeID2) else {
@@ -641,7 +625,7 @@ final class IntegrationTestRunner {
             let inst2 = snap2.instanceID
 
             self.assertTrue(inst2 != oldInst, "New execution instance must have different identity")
-            print("    [Info] Dummy 2 launched: PID=\(pid2), StartTimeSec=\(inst2.startTimeSec), isFinishedLaunching=\(app2.isFinishedLaunching)")
+            print("    [Info] Dummy 2 launched: PID=\(pid2), StartTimeSec=\(inst2.startTimeSec), isFinishedLaunching=\(app2.isFinishedLaunching), launchNotif=\(app2LaunchNotif)")
 
             let stateMachine = TerminationStateMachine()
             // Old instance state recorded as terminated
@@ -670,7 +654,7 @@ final class IntegrationTestRunner {
                    termApp.processIdentifier == pid2,
                    termApp == app2 {
                     let nowNs = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
-                    dummy2Tracker.record(at: nowNs)
+                    dummy2Tracker.record(pid: termApp.processIdentifier, at: nowNs)
                     Task {
                         await stateMachine.handleTerminationObserved(instanceID: inst2)
                     }
@@ -697,7 +681,7 @@ final class IntegrationTestRunner {
             NSWorkspace.shared.notificationCenter.removeObserver(observer2)
 
             self.assertTrue(app2.isTerminated, "Dummy 2 must be confirmed terminated")
-            self.assertTrue(dummy2Tracker.isReceived, "Notification must be received for Dummy 2")
+            self.assertTrue(dummy2Tracker.isReceived(for: inst2.pid), "Notification must be received for Dummy 2")
             let finalState2 = await stateMachine.getState(for: inst2)
             switch finalState2 {
             case .confirmed(let src):

@@ -683,32 +683,49 @@ final class TestSuiteRunner {
             self.assertFalse(isNewDead)
         }
 
-        // MARK: - Regression Tests for Review Items (R1, R2, R3)
+        // MARK: - Regression Tests for Review Items (R1, R2, R4)
 
         await runTest("testChronologyCalculationSafeUnderflow (R1 Safe UInt64 Formatting)") {
-            // Helper simulation of the safe subtraction function
-            func formatTime(observedNs: UInt64?, requestNs: UInt64) -> String {
-                guard let obs = observedNs else { return "not observed" }
-                guard obs >= requestNs else { return "precedes request" }
-                let diffSec = Double(obs - requestNs) / 1e9
-                return "\(String(format: "%.3f", diffSec))s"
-            }
-
             let tReq: UInt64 = 343861508321500
             // Test unobserved (nil) does not underflow
-            self.assertEqual(formatTime(observedNs: nil, requestNs: tReq), "not observed")
+            self.assertEqual(ChronologyFormatter.format(observedNs: nil, requestNs: tReq), "not observed")
             // Test 0 timestamp does not underflow or crash
-            self.assertEqual(formatTime(observedNs: 0, requestNs: tReq), "precedes request")
+            self.assertEqual(ChronologyFormatter.format(observedNs: 0, requestNs: tReq), "precedes request")
             // Test out-of-order timestamp does not underflow or crash
-            self.assertEqual(formatTime(observedNs: tReq - 100, requestNs: tReq), "precedes request")
+            self.assertEqual(ChronologyFormatter.format(observedNs: tReq - 100, requestNs: tReq), "precedes request")
             // Test normal timestamp calculates valid difference
-            self.assertEqual(formatTime(observedNs: tReq + 1_000_000_000, requestNs: tReq), "1.000s")
+            self.assertEqual(ChronologyFormatter.format(observedNs: tReq + 1_000_000_000, requestNs: tReq), "1.000s")
         }
 
         await runTest("testTargetMismatchDoesNotTriggerAlreadyTerminated (R2 Contract Fix)") {
+            final class StrictConfinementTestTerminator: AppTerminator, @unchecked Sendable {
+                let allowedPID: pid_t
+                private(set) var requestTerminateCallCount = 0
+
+                init(allowedPID: pid_t) {
+                    self.allowedPID = allowedPID
+                }
+
+                func isAlreadyTerminated(instanceID: ExecutionInstanceID) -> Bool {
+                    guard instanceID.pid == allowedPID else { return false }
+                    return false
+                }
+
+                func requestTerminate(instanceID: ExecutionInstanceID) -> Bool {
+                    guard instanceID.pid == allowedPID else { return false }
+                    requestTerminateCallCount += 1
+                    return true
+                }
+
+                func checkQuickTermination(instanceID: ExecutionInstanceID) -> Bool {
+                    guard instanceID.pid == allowedPID else { return false }
+                    return false
+                }
+            }
+
             let stateMachine = TerminationStateMachine()
             let protection = MockProtectionChecker()
-            let terminator = MockAppTerminator()
+            let terminator = StrictConfinementTestTerminator(allowedPID: 1234)
 
             let requestedPID: pid_t = 1234
             let targetInstance = ExecutionInstanceID(pid: requestedPID, startTimeSec: 1700000000, startTimeUsec: 0)
@@ -733,31 +750,29 @@ final class TestSuiteRunner {
             self.assertEqual(result.finalState, .blocked(reason: .instanceMismatch))
             let isDead = await stateMachine.isObservedTerminated(instanceID: targetInstance)
             self.assertFalse(isDead, "Mismatched target must NOT be recorded as terminated")
+            self.assertEqual(terminator.requestTerminateCallCount, 0, "No termination request must be issued on mismatch")
         }
 
-        await runTest("testRejectStaleInstanceStartTimeOnCPUSample (R3 Kernel Validation)") {
-            let collector = DarwinStatusCollector()
-            let selfPID = ProcessInfo.processInfo.processIdentifier
+        await runTest("testNotificationTrackerPerPIDAttribution (R4 Readiness Fix)") {
+            let tracker = NotificationTracker()
 
-            // First probe real start time of self
-            let probeID = ExecutionInstanceID(pid: selfPID, startTimeSec: 0, startTimeUsec: 0)
-            guard let realSnapshot = collector.currentSnapshot(for: probeID) else {
-                self.assertTrue(false, "Failed to get real snapshot for self")
-                return
-            }
+            // 1. Early event for PID 200 before filter query is preserved
+            tracker.record(pid: 200, at: 1000)
+            self.assertTrue(tracker.isReceived(for: 200), "PID 200 event must be preserved")
+            self.assertEqual(tracker.recordedTime(for: 200), 1000)
 
-            // Valid sample with real start time should succeed
-            let validSample = collector.queryCPUTimeSample(for: realSnapshot.instanceID)
-            self.assertTrue(validSample != nil, "Query with exact kernel start time must succeed")
+            // 2. Unseen PID 300 must return false
+            self.assertFalse(tracker.isReceived(for: 300), "PID 300 has no events yet")
 
-            // Stale sample with altered start time must be rejected (returns nil)
-            let staleInstance = ExecutionInstanceID(
-                pid: selfPID,
-                startTimeSec: realSnapshot.instanceID.startTimeSec &+ 9999,
-                startTimeUsec: realSnapshot.instanceID.startTimeUsec
-            )
-            let staleSample = collector.queryCPUTimeSample(for: staleInstance)
-            self.assertEqual(staleSample, nil, "Query with stale/mismatched start time MUST return nil")
+            // 3. Other event (PID 100) before query must NOT mark target (PID 200) ready
+            let tracker2 = NotificationTracker()
+            tracker2.record(pid: 100, at: 500)
+            self.assertFalse(tracker2.isReceived(for: 200), "Other PID 100 must not mark target PID 200 ready")
+
+            // 4. Target PID 200 only becomes ready when its own event arrives
+            tracker2.record(pid: 200, at: 1500)
+            self.assertTrue(tracker2.isReceived(for: 200), "Target PID 200 must be marked ready when its own event arrives")
+            self.assertEqual(tracker2.recordedTime(for: 200), 1500)
         }
 
         let endTime = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
