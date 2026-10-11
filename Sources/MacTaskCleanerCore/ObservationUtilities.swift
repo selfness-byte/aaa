@@ -3,12 +3,37 @@ import Foundation
 // MARK: - Safe Chronology Formatter
 
 public enum ChronologyFormatter {
-    /// Safely formats relative elapsed time in seconds without UInt64 subtraction underflow.
+    /// Formats relative chronology time with observed nanoseconds and request nanoseconds.
+    /// Safely handles unobserved timestamps (nil) and out-of-order timestamps without UInt64 subtraction underflow.
     public static func format(observedNs: UInt64?, requestNs: UInt64) -> String {
-        guard let obs = observedNs else { return "not observed" }
-        guard obs >= requestNs else { return "precedes request" }
+        guard let obs = observedNs else {
+            return "not observed within wait window"
+        }
+        guard obs >= requestNs else {
+            let diffSec = Double(requestNs - obs) / 1e9
+            return "\(obs) ns (precedes request by \(String(format: "%.3f", diffSec))s)"
+        }
         let diffSec = Double(obs - requestNs) / 1e9
-        return "\(String(format: "%.3f", diffSec))s"
+        return "\(obs) ns (\(String(format: "%.3f", diffSec))s)"
+    }
+}
+
+// MARK: - Target Confinement Guard
+
+public enum TargetConfinementGuard {
+    /// Strictly verifies whether a target PID, bundle identifier, and standardized path match allowed target parameters.
+    public static func validate(
+        targetPID: pid_t,
+        allowedPID: pid_t,
+        targetBundleID: String?,
+        expectedBundleID: String,
+        targetBundlePath: String?,
+        expectedBundlePath: String
+    ) -> Bool {
+        guard targetPID == allowedPID else { return false }
+        guard let bID = targetBundleID, bID == expectedBundleID else { return false }
+        guard let path = targetBundlePath, path == expectedBundlePath else { return false }
+        return true
     }
 }
 

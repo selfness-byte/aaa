@@ -688,16 +688,41 @@ final class TestSuiteRunner {
         await runTest("testChronologyCalculationSafeUnderflow (R1 Safe UInt64 Formatting)") {
             let tReq: UInt64 = 343861508321500
             // Test unobserved (nil) does not underflow
-            self.assertEqual(ChronologyFormatter.format(observedNs: nil, requestNs: tReq), "not observed")
+            self.assertEqual(ChronologyFormatter.format(observedNs: nil, requestNs: tReq), "not observed within wait window")
             // Test 0 timestamp does not underflow or crash
-            self.assertEqual(ChronologyFormatter.format(observedNs: 0, requestNs: tReq), "precedes request")
+            self.assertTrue(ChronologyFormatter.format(observedNs: 0, requestNs: tReq).contains("precedes request"))
             // Test out-of-order timestamp does not underflow or crash
-            self.assertEqual(ChronologyFormatter.format(observedNs: tReq - 100, requestNs: tReq), "precedes request")
+            self.assertTrue(ChronologyFormatter.format(observedNs: tReq - 100, requestNs: tReq).contains("precedes request"))
             // Test normal timestamp calculates valid difference
-            self.assertEqual(ChronologyFormatter.format(observedNs: tReq + 1_000_000_000, requestNs: tReq), "1.000s")
+            self.assertEqual(ChronologyFormatter.format(observedNs: tReq + 1_000_000_000, requestNs: tReq), "\(tReq + 1_000_000_000) ns (1.000s)")
         }
 
         await runTest("testTargetMismatchDoesNotTriggerAlreadyTerminated (R2 Contract Fix)") {
+            // Direct validation of shared TargetConfinementGuard
+            self.assertTrue(TargetConfinementGuard.validate(
+                targetPID: 1234, allowedPID: 1234,
+                targetBundleID: "com.test.app", expectedBundleID: "com.test.app",
+                targetBundlePath: "/App/test.app", expectedBundlePath: "/App/test.app"
+            ), "Matching PID and bundle metadata must validate")
+
+            self.assertFalse(TargetConfinementGuard.validate(
+                targetPID: 9999, allowedPID: 1234,
+                targetBundleID: "com.test.app", expectedBundleID: "com.test.app",
+                targetBundlePath: "/App/test.app", expectedBundlePath: "/App/test.app"
+            ), "Mismatched PID must fail validation")
+
+            self.assertFalse(TargetConfinementGuard.validate(
+                targetPID: 1234, allowedPID: 1234,
+                targetBundleID: "com.other.app", expectedBundleID: "com.test.app",
+                targetBundlePath: "/App/test.app", expectedBundlePath: "/App/test.app"
+            ), "Mismatched bundle ID must fail validation")
+
+            self.assertFalse(TargetConfinementGuard.validate(
+                targetPID: 1234, allowedPID: 1234,
+                targetBundleID: "com.test.app", expectedBundleID: "com.test.app",
+                targetBundlePath: "/Bad/evil.app", expectedBundlePath: "/App/test.app"
+            ), "Mismatched bundle path must fail validation")
+
             final class StrictConfinementTestTerminator: AppTerminator, @unchecked Sendable {
                 let allowedPID: pid_t
                 private(set) var requestTerminateCallCount = 0
@@ -725,12 +750,17 @@ final class TestSuiteRunner {
 
             let stateMachine = TerminationStateMachine()
             let protection = MockProtectionChecker()
-            let terminator = StrictConfinementTestTerminator(allowedPID: 1234)
+            // Terminator strictly enforces allowedPID 9999 (not requested 1234)
+            let terminator = StrictConfinementTestTerminator(allowedPID: 9999)
 
             let requestedPID: pid_t = 1234
             let targetInstance = ExecutionInstanceID(pid: requestedPID, startTimeSec: 1700000000, startTimeUsec: 0)
 
-            // Terminator simulates R2 strict contract: mismatched PID returns false (not true!)
+            // Direct terminator invocation: mismatch PID must return false and 0 calls
+            self.assertFalse(terminator.isAlreadyTerminated(instanceID: targetInstance), "Mismatched PID must return false from isAlreadyTerminated")
+            self.assertFalse(terminator.requestTerminate(instanceID: targetInstance), "Mismatched PID must return false from requestTerminate")
+            self.assertEqual(terminator.requestTerminateCallCount, 0, "Zero termination requests allowed on mismatch")
+
             // Process snapshot has mismatched PID
             let mismatchSnapshot = ProcessIdentitySnapshot(
                 instanceID: ExecutionInstanceID(pid: 9999, startTimeSec: 1700000000, startTimeUsec: 0),

@@ -1,16 +1,25 @@
 Building for debugging...
-[Planning deferred tasks]
+[1 / 7]
 [2 / 8] MacTaskCleanerCore
-[7 / 13] MacTaskCleanerCore
-[11 / 16] MacTaskCleanerCore
-[13 / 18] MacTaskCleanerCore
+[3 / 31]
+[10 / 31]
+[11 / 31]
+[15 / 31]
+[16 / 31]
+[18 / 31]
+[20 / 31]
+[25 / 31] MacTaskCleanerCore
+[29 / 34] MacTaskCleanerTestsRunner-product
+[29 / 34] MacTaskCleanerCore
 /Users/mj/.gemini/antigravity-ide/scratch/aaa_repo/Package.swift: MacTaskCleanerCore: ld: warning: search path '/Library/Developer/CommandLineTools/Developer/Library/Frameworks' not found
-[15 / 19] MacTaskCleanerTestsRunner-product
-[16 / 19] MacTaskCleanerTestsRunner-product
+[31 / 34] MacTaskCleanerCore
+[33 / 37] MacTaskCleanerTestsRunner-product
+[34 / 37] MacTaskCleanerTestsRunner-product
 /Users/mj/.gemini/antigravity-ide/scratch/aaa_repo/Package.swift: MacTaskCleanerTestsRunner-product: ld: warning: search path '/Library/Developer/CommandLineTools/Developer/usr/lib' not found
 /Users/mj/.gemini/antigravity-ide/scratch/aaa_repo/Package.swift: MacTaskCleanerTestsRunner-product: ld: warning: search path '/Library/Developer/CommandLineTools/Developer/Library/Frameworks' not found
-[18 / 19] MacTaskCleanerTestsRunner-product
-Build complete! (1.91초)
+[36 / 37] MacTaskCleanerTestsRunner-product
+[38 / 38] MacTaskCleanerTestsRunner-product
+Build complete! (161.94초)
 ==================================================
 🚀 Running MacTaskCleaner Tests (Phase 1 & Phase 2)
 ==================================================
@@ -56,9 +65,8 @@ Build complete! (1.91초)
 
 ==================================================
 📊 Test Summary:
-   Assertions Passed: 66
+   Assertions Passed: 73
    Assertions Failed: 0
-   Elapsed Time: 4.317 ms
+   Elapsed Time: 1.726 ms
 🎉 ALL TESTS PASSED SUCCESSFULLY!
 ==================================================
-EXIT_CODE=0

@@ -29,18 +29,14 @@ final class DummyAppTerminator: AppTerminator, @unchecked Sendable {
     }
 
     func requestTerminate(instanceID: ExecutionInstanceID) -> Bool {
-        // Strict confinement checks:
-        // 1. PID must match the exact instance launched for this test
-        // 2. NSRunningApplication instance must match allowedPID
-        // 3. Bundle identifier must match DummyTestTarget
-        // 4. Standardized Bundle URL path must match expectedBundleURL exactly
-        // 5. Must not already be terminated
-        guard instanceID.pid == allowedPID,
-              runningApp.processIdentifier == allowedPID,
-              runningApp.bundleIdentifier == allowedBundleID,
-              let appPath = runningApp.bundleURL?.standardizedFileURL.path,
-              appPath == expectedBundleURL.path,
-              !runningApp.isTerminated else {
+        guard TargetConfinementGuard.validate(
+            targetPID: instanceID.pid,
+            allowedPID: allowedPID,
+            targetBundleID: runningApp.bundleIdentifier,
+            expectedBundleID: allowedBundleID,
+            targetBundlePath: runningApp.bundleURL?.standardizedFileURL.path,
+            expectedBundlePath: expectedBundleURL.path
+        ), !runningApp.isTerminated else {
             return false
         }
         requestTerminateCallCount += 1
@@ -104,28 +100,22 @@ final class IntegrationTestRunner {
 
     func runTest(_ name: String, block: () async throws -> Void) async {
         do {
+            let startPasses = passedCount
             let startFailures = failedCount
             try await block()
-            if failedCount == startFailures {
+            let passedDelta = passedCount - startPasses
+            let failedDelta = failedCount - startFailures
+
+            if failedDelta == 0 && passedDelta > 0 {
                 printPass(name)
+            } else if passedDelta == 0 && failedDelta == 0 {
+                failedCount += 1
+                print("❌ [FAILED] \(name) executed 0 assertions! (Empty test block or early return without assertion)")
             }
         } catch {
             failedCount += 1
             print("  💥 [ERROR] \(name) threw error: \(error)")
         }
-    }
-
-    /// Safe subtraction helper to avoid UInt64 underflow and Signal 4 crash when formatting event chronology.
-    func formatChronologyTime(observedNs: UInt64?, requestNs: UInt64) -> String {
-        guard let obs = observedNs else {
-            return "not observed within wait window"
-        }
-        guard obs >= requestNs else {
-            let diffSec = Double(requestNs - obs) / 1e9
-            return "\(obs) ns (precedes request by \(String(format: "%.3f", diffSec))s)"
-        }
-        let diffSec = Double(obs - requestNs) / 1e9
-        return "\(obs) ns (\(String(format: "%.3f", diffSec))s)"
     }
 
     /// Runs the main run loop in default mode to process input sources and timer events up to a deadline,
@@ -450,6 +440,17 @@ final class IntegrationTestRunner {
                 }
             }
 
+            // Strict Confinement Validation: Directly verify DummyAppTerminator rejects PID and path mismatches
+            let mismatchPID = ExecutionInstanceID(pid: 99_999, startTimeSec: inst.startTimeSec, startTimeUsec: 0)
+            self.assertFalse(terminator.isAlreadyTerminated(instanceID: mismatchPID), "Mismatched PID must return false for isAlreadyTerminated")
+            self.assertFalse(terminator.requestTerminate(instanceID: mismatchPID), "Mismatched PID must return false for requestTerminate")
+            self.assertEqual(terminator.requestTerminateCallCount, 0, "No terminate call allowed on PID mismatch")
+
+            let bogusURL = URL(fileURLWithPath: "/tmp/evil/DummyTestTarget.app")
+            let badPathTerminator = DummyAppTerminator(runningApp: app, expectedBundleURL: bogusURL)
+            self.assertFalse(badPathTerminator.requestTerminate(instanceID: inst), "Path mismatch must reject terminate")
+            self.assertEqual(badPathTerminator.requestTerminateCallCount, 0, "No terminate call allowed on path mismatch")
+
             let tReq = collector.currentMonotonicNanoseconds()
 
             // Initiate termination through state machine
@@ -495,8 +496,8 @@ final class IntegrationTestRunner {
                 self.assertTrue(true, "Final state is confirmed via \(source)")
                 print("    [Chronology] Request Sent: \(tReq) ns")
                 print("    [Chronology] Terminate Return: true")
-                print("    [Chronology] isTerminated Observed: \(self.formatChronologyTime(observedNs: tTermObserved, requestNs: tReq))")
-                print("    [Chronology] Notification Received: \(self.formatChronologyTime(observedNs: tracker.isReceived(for: inst.pid) ? tracker.recordedTime(for: inst.pid) : nil, requestNs: tReq))")
+                print("    [Chronology] isTerminated Observed: \(ChronologyFormatter.format(observedNs: tTermObserved, requestNs: tReq))")
+                print("    [Chronology] Notification Received: \(ChronologyFormatter.format(observedNs: tracker.isReceived(for: inst.pid) ? tracker.recordedTime(for: inst.pid) : nil, requestNs: tReq))")
                 print("    [Chronology] Final State: .confirmed(\(source))")
             default:
                 self.assertTrue(false, "Expected .confirmed, got \(finalState)")
@@ -600,8 +601,8 @@ final class IntegrationTestRunner {
             let isObserved = await stateMachine.isObservedTerminated(instanceID: instDelayed)
             self.assertTrue(isObserved)
 
-            print("    [Chronology] Late isTerminated Observed: \(self.formatChronologyTime(observedNs: tLateTermObserved, requestNs: tReq))")
-            print("    [Chronology] Late Notification Received: \(self.formatChronologyTime(observedNs: delayedTracker.isReceived(for: instDelayed.pid) ? delayedTracker.recordedTime(for: instDelayed.pid) : nil, requestNs: tReq))")
+            print("    [Chronology] Late isTerminated Observed: \(ChronologyFormatter.format(observedNs: tLateTermObserved, requestNs: tReq))")
+            print("    [Chronology] Late Notification Received: \(ChronologyFormatter.format(observedNs: delayedTracker.isReceived(for: instDelayed.pid) ? delayedTracker.recordedTime(for: instDelayed.pid) : nil, requestNs: tReq))")
             print("    [Chronology] Final State Transition: .confirmed(.lateNotification)")
         }
 
