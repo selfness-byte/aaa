@@ -139,22 +139,52 @@ public final class DarwinStatusCollector: ProcessIdentityProvider, @unchecked Se
     }
 
     /// Queries process cumulative CPU times via proc_pidinfo(PROC_PIDTASKINFO).
-    /// Validates returned byte count against MemoryLayout<proc_taskinfo>.size.
+    /// Strictly verifies kernel process identity (PROC_PIDTBSDINFO) both before and after querying
+    /// taskinfo to ensure caller instance start time matches kernel reality and guard against PID recycling.
     public func queryCPUTimeSample(for instanceID: ExecutionInstanceID, generationID: UInt64 = 0) -> CPUTimeSample? {
-        var taskInfo = proc_taskinfo()
-        let expectedSize = MemoryLayout<proc_taskinfo>.size
-        let ret = proc_pidinfo(instanceID.pid, PROC_PIDTASKINFO, 0, &taskInfo, Int32(expectedSize))
+        // Step 1: Pre-query identity verification via PROC_PIDTBSDINFO
+        var bsdInfoPre = proc_bsdinfo()
+        let bsdSize = MemoryLayout<proc_bsdinfo>.size
+        let bsdRetPre = proc_pidinfo(instanceID.pid, PROC_PIDTBSDINFO, 0, &bsdInfoPre, Int32(bsdSize))
+        guard bsdRetPre == Int32(bsdSize), bsdInfoPre.pbi_status != UInt32(SZOMB) else {
+            return nil
+        }
 
-        guard ret == Int32(expectedSize) else {
+        let kernelStartSec = UInt64(bsdInfoPre.pbi_start_tvsec)
+        let kernelStartUsec = UInt64(bsdInfoPre.pbi_start_tvusec)
+
+        // If caller specified an existing instance start time, require exact match
+        if instanceID.startTimeSec > 0 || instanceID.startTimeUsec > 0 {
+            guard kernelStartSec == instanceID.startTimeSec,
+                  kernelStartUsec == instanceID.startTimeUsec else {
+                return nil // Rejects caller providing stale or mismatched instance ID
+            }
+        }
+
+        // Step 2: Query CPU task info via PROC_PIDTASKINFO
+        var taskInfo = proc_taskinfo()
+        let taskSize = MemoryLayout<proc_taskinfo>.size
+        let taskRet = proc_pidinfo(instanceID.pid, PROC_PIDTASKINFO, 0, &taskInfo, Int32(taskSize))
+        guard taskRet == Int32(taskSize) else {
             return nil
         }
 
         let monotonicNs = currentMonotonicNanoseconds()
 
+        // Step 3: Post-query identity verification to guard against PID recycling race
+        var bsdInfoPost = proc_bsdinfo()
+        let bsdRetPost = proc_pidinfo(instanceID.pid, PROC_PIDTBSDINFO, 0, &bsdInfoPost, Int32(bsdSize))
+        guard bsdRetPost == Int32(bsdSize),
+              UInt64(bsdInfoPost.pbi_start_tvsec) == kernelStartSec,
+              UInt64(bsdInfoPost.pbi_start_tvusec) == kernelStartUsec,
+              bsdInfoPost.pbi_status != UInt32(SZOMB) else {
+            return nil // Process recycled or exited during CPU sample collection
+        }
+
         return CPUTimeSample(
             pid: instanceID.pid,
-            instanceStartTimeSec: instanceID.startTimeSec,
-            instanceStartTimeUsec: instanceID.startTimeUsec,
+            instanceStartTimeSec: kernelStartSec,
+            instanceStartTimeUsec: kernelStartUsec,
             userCPUTimeMach: taskInfo.pti_total_user,
             systemCPUTimeMach: taskInfo.pti_total_system,
             monotonicTimeNanoseconds: monotonicNs,

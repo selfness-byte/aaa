@@ -1,33 +1,16 @@
 Building for debugging...
 [Planning deferred tasks]
-[23 / 38]
-[24 / 39] MacTaskCleanerCore
-[33 / 95]
-[37 / 95]
-[42 / 95]
-[44 / 95]
-[48 / 95]
-[50 / 95]
-[53 / 95]
-[56 / 95]
-[58 / 95]
-[59 / 95]
-[66 / 95]
-[67 / 95]
-[71 / 95]
-[72 / 95]
-[74 / 95]
-[76 / 95]
-[80 / 95] MacTaskCleanerCore
-[89 / 96] MacTaskCleanerTestsRunner-product
-[91 / 98] MacTaskCleanerTestsRunner-product
-[92 / 98] MacTaskCleanerCore
-[94 / 98] MacTaskCleanerTestsRunner-product
+[1 / 7]
+[2 / 8] MacTaskCleanerCore
+[6 / 12] MacTaskCleanerCore
+[10 / 15] MacTaskCleanerCore
+[12 / 17] MacTaskCleanerCore
 /Users/mj/.gemini/antigravity-ide/scratch/aaa_repo/Package.swift: MacTaskCleanerCore: ld: warning: search path '/Library/Developer/CommandLineTools/Developer/Library/Frameworks' not found
+[15 / 18] MacTaskCleanerTestsRunner-product
 /Users/mj/.gemini/antigravity-ide/scratch/aaa_repo/Package.swift: MacTaskCleanerTestsRunner-product: ld: warning: search path '/Library/Developer/CommandLineTools/Developer/usr/lib' not found
 /Users/mj/.gemini/antigravity-ide/scratch/aaa_repo/Package.swift: MacTaskCleanerTestsRunner-product: ld: warning: search path '/Library/Developer/CommandLineTools/Developer/Library/Frameworks' not found
-[96 / 98] MacTaskCleanerTestsRunner-product
-Build complete! (31.30초)
+[17 / 18] MacTaskCleanerTestsRunner-product
+Build complete! (2.15초)
 ==================================================
 🚀 Running MacTaskCleaner Tests (Phase 1 & Phase 2)
 ==================================================
@@ -67,12 +50,15 @@ Build complete! (31.30초)
   ✅ [PASS] testTimeoutDoesNotOverwriteConfirmed (Notification arrived first)
   ✅ [PASS] testLateNotificationTransition (Unconfirmed -> LateConfirmed)
   ✅ [PASS] testNewExecutionInstanceIsolation (Isolation across restarts)
+  ✅ [PASS] testChronologyCalculationSafeUnderflow (R1 Safe UInt64 Formatting)
+  ✅ [PASS] testTargetMismatchDoesNotTriggerAlreadyTerminated (R2 Contract Fix)
+  ✅ [PASS] testRejectStaleInstanceStartTimeOnCPUSample (R3 Kernel Validation)
 
 ==================================================
 📊 Test Summary:
-   Assertions Passed: 53
+   Assertions Passed: 61
    Assertions Failed: 0
-   Elapsed Time: 1.472 ms
+   Elapsed Time: 2.388 ms
 🎉 ALL TESTS PASSED SUCCESSFULLY!
 ==================================================
 EXIT_CODE=0

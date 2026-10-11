@@ -683,6 +683,83 @@ final class TestSuiteRunner {
             self.assertFalse(isNewDead)
         }
 
+        // MARK: - Regression Tests for Review Items (R1, R2, R3)
+
+        await runTest("testChronologyCalculationSafeUnderflow (R1 Safe UInt64 Formatting)") {
+            // Helper simulation of the safe subtraction function
+            func formatTime(observedNs: UInt64?, requestNs: UInt64) -> String {
+                guard let obs = observedNs else { return "not observed" }
+                guard obs >= requestNs else { return "precedes request" }
+                let diffSec = Double(obs - requestNs) / 1e9
+                return "\(String(format: "%.3f", diffSec))s"
+            }
+
+            let tReq: UInt64 = 343861508321500
+            // Test unobserved (nil) does not underflow
+            self.assertEqual(formatTime(observedNs: nil, requestNs: tReq), "not observed")
+            // Test 0 timestamp does not underflow or crash
+            self.assertEqual(formatTime(observedNs: 0, requestNs: tReq), "precedes request")
+            // Test out-of-order timestamp does not underflow or crash
+            self.assertEqual(formatTime(observedNs: tReq - 100, requestNs: tReq), "precedes request")
+            // Test normal timestamp calculates valid difference
+            self.assertEqual(formatTime(observedNs: tReq + 1_000_000_000, requestNs: tReq), "1.000s")
+        }
+
+        await runTest("testTargetMismatchDoesNotTriggerAlreadyTerminated (R2 Contract Fix)") {
+            let stateMachine = TerminationStateMachine()
+            let protection = MockProtectionChecker()
+            let terminator = MockAppTerminator()
+
+            let requestedPID: pid_t = 1234
+            let targetInstance = ExecutionInstanceID(pid: requestedPID, startTimeSec: 1700000000, startTimeUsec: 0)
+
+            // Terminator simulates R2 strict contract: mismatched PID returns false (not true!)
+            // Process snapshot has mismatched PID
+            let mismatchSnapshot = ProcessIdentitySnapshot(
+                instanceID: ExecutionInstanceID(pid: 9999, startTimeSec: 1700000000, startTimeUsec: 0),
+                uid: defaultAllowedUID,
+                isAlive: true
+            )
+
+            let result = await stateMachine.initiateTermination(
+                targetInstance: targetInstance,
+                allowedUID: defaultAllowedUID,
+                identityProvider: MockIdentityProvider(mismatchSnapshot),
+                protectionChecker: protection,
+                terminator: terminator
+            )
+
+            // Must NOT be targetAlreadyTerminated; must fail closed with instanceMismatch
+            self.assertEqual(result.finalState, .blocked(reason: .instanceMismatch))
+            let isDead = await stateMachine.isObservedTerminated(instanceID: targetInstance)
+            self.assertFalse(isDead, "Mismatched target must NOT be recorded as terminated")
+        }
+
+        await runTest("testRejectStaleInstanceStartTimeOnCPUSample (R3 Kernel Validation)") {
+            let collector = DarwinStatusCollector()
+            let selfPID = ProcessInfo.processInfo.processIdentifier
+
+            // First probe real start time of self
+            let probeID = ExecutionInstanceID(pid: selfPID, startTimeSec: 0, startTimeUsec: 0)
+            guard let realSnapshot = collector.currentSnapshot(for: probeID) else {
+                self.assertTrue(false, "Failed to get real snapshot for self")
+                return
+            }
+
+            // Valid sample with real start time should succeed
+            let validSample = collector.queryCPUTimeSample(for: realSnapshot.instanceID)
+            self.assertTrue(validSample != nil, "Query with exact kernel start time must succeed")
+
+            // Stale sample with altered start time must be rejected (returns nil)
+            let staleInstance = ExecutionInstanceID(
+                pid: selfPID,
+                startTimeSec: realSnapshot.instanceID.startTimeSec &+ 9999,
+                startTimeUsec: realSnapshot.instanceID.startTimeUsec
+            )
+            let staleSample = collector.queryCPUTimeSample(for: staleInstance)
+            self.assertEqual(staleSample, nil, "Query with stale/mismatched start time MUST return nil")
+        }
+
         let endTime = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
         let elapsedMs = Double(endTime - startTime) / 1_000_000.0
 

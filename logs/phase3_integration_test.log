@@ -1,43 +1,49 @@
 Building for debugging...
-[1 / 7]
-Build complete! (0.38초)
+[2 / 6] MacTaskCleanerIntegrationTests-product
+[4 / 8] MacTaskCleanerIntegrationTests-product
+[5 / 8] MacTaskCleanerIntegrationTests-product
+/Users/mj/.gemini/antigravity-ide/scratch/aaa_repo/Package.swift: MacTaskCleanerIntegrationTests-product: ld: warning: search path '/Library/Developer/CommandLineTools/Developer/usr/lib' not found
+/Users/mj/.gemini/antigravity-ide/scratch/aaa_repo/Package.swift: MacTaskCleanerIntegrationTests-product: ld: warning: search path '/Library/Developer/CommandLineTools/Developer/Library/Frameworks' not found
+[7 / 8] MacTaskCleanerIntegrationTests-product
+Build complete! (1.60초)
 ==================================================
 🚀 Running MacTaskCleaner Phase 3: macOS Integration Tests
 ==================================================
 📍 DummyTestTarget.app verified at: /Users/mj/.gemini/antigravity-ide/scratch/aaa_repo/.build/out/Products/Debug/DummyTestTarget.app
     [Info] Mach PageSize: 16384 bytes
-    [Info] Wired: 3400 MB, Active: 821 MB, Compressed: 2404 MB
-    [Info] Swap Total: 13312 MB, Used: 12204 MB, Avail: 1107 MB
+    [Info] Wired: 3290 MB, Active: 832 MB, Compressed: 2422 MB
+    [Info] Swap Total: 13312 MB, Used: 12414 MB, Avail: 897 MB
     [Info] Mach Timebase: 125/3
-    [CPU Derivation] Sample 1: UserTicks=14215611, SysTicks=9425507, t1=343855430309750 ns
-    [CPU Derivation] Sample 2: UserTicks=15649691, SysTicks=9434009, t2=343855490703750 ns
-    [CPU Derivation] ΔUserTicks=1434080, ΔSysTicks=8502, ΔMonotonicNs=60394000 ns, Timebase=125/3
-    [CPU Derivation] Calculated CPU Usage: 99.53% (Deliberate runner-thread loop, not idle measurement)
+    [CPU Derivation] Sample 1: UserTicks=25087132, SysTicks=11625256, t1=345552167355250 ns
+    [CPU Derivation] Sample 2: UserTicks=26372904, SysTicks=12214995, t2=345552220868791 ns
+    [CPU Derivation] ΔUserTicks=1285772, ΔSysTicks=589739, ΔMonotonicNs=53513541 ns, Timebase=125/3
+    [CPU Derivation] Calculated CPU Usage: 146.03% (Deliberate runner-thread loop, not idle measurement)
   ✅ [PASS] Test 1: Read-Only System Metrics, Mach Timebase & CPU Sample Link
-    [Info] Dummy 1 launched: PID=68465, StartTimeSec=1791689170, UID=501, Policy=.regular
+    [Info] Dummy 1 launched: PID=73714, StartTimeSec=1791690867, UID=501, Policy=.regular, isFinishedLaunching=true
   ✅ [PASS] Test 2: Launch Dummy App (AppKit Bundle) & Query Darwin Process Info
-    [Chronology] Request Sent: 343861508321500 ns
+    [Chronology] Request Sent: 345552870050583 ns
     [Chronology] Terminate Return: true
-    [Chronology] isTerminated Observed: 343861680186500 ns (0.172s)
-    [Chronology] Notification Received: 343861629335708 ns (0.121s)
+    [Chronology] isTerminated Observed: 345552961374041 ns (0.091s)
+    [Chronology] Notification Received: 345552934237958 ns (0.064s)
     [Chronology] Final State: .confirmed(notification)
   ✅ [PASS] Test 3: Graceful Termination of Dummy App via AppKit & Event Chronology
-    [Info] Dummy Delayed launched: PID=68486, StartTimeSec=1791689176
-    [Chronology] Request Sent: 343867143055083 ns
-    [Chronology] Timeout Reached at: 343867447868208 ns -> State: .unconfirmedWithinTimeout (No force terminate invoked)
-    [Chronology] Late Notification Received at: 343868495489125 ns
+    [Info] Dummy Delayed launched: PID=73715, StartTimeSec=1791690867, isFinishedLaunching=true
+    [Chronology] Request Sent: 345553194203708 ns
+    [Chronology] Timeout Reached at: 345553520042833 ns -> State: .unconfirmedWithinTimeout (No force terminate invoked)
+    [Chronology] Late isTerminated Observed: 345554545124916 ns (1.351s)
+    [Chronology] Late Notification Received: 345554511922125 ns (1.318s)
     [Chronology] Final State Transition: .confirmed(.lateNotification)
   ✅ [PASS] Test 4: Delayed Termination of Dummy App (Timeout -> Late Confirmation)
-    [Info] Dummy 2 launched: PID=68505, StartTimeSec=1791689183, isFinishedLaunching=false
+    [Info] Dummy 2 launched: PID=73723, StartTimeSec=1791690869, isFinishedLaunching=true
     [Info] Dummy 2 termination initiated: state=awaitingTermination, terminate() returned=Optional(true)
-    [Info] Dummy 2 cleanly terminated: PID=68505, State=.confirmed(notification)
+    [Info] Dummy 2 cleanly terminated: PID=73723, State=.confirmed(notification)
   ✅ [PASS] Test 5: Respawn / New Execution Isolation
 
 ==================================================
 📊 Integration Test Summary:
-   Assertions Passed: 46
+   Assertions Passed: 48
    Assertions Failed: 0
-   Elapsed Time: 18773.145 ms
+   Elapsed Time: 2823.274 ms
 🎉 ALL INTEGRATION TESTS PASSED SUCCESSFULLY!
 ==================================================
 EXIT_CODE=0
